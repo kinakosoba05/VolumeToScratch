@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>VolumeToScratch (DL版)</title>
+    <title>VolumeToScratch (Auto-Max版)</title>
     <style>
         body { font-family: sans-serif; padding: 20px; background: #eef2f7; color: #333; }
         .box { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); max-width: 650px; margin: 0 auto; text-align: center; }
@@ -19,7 +19,7 @@
 <body>
 
 <div class="box">
-    <h2>🔊 Scratch用 音量データ抽出ツール (DL版)</h2>
+    <h2>🔊 Scratch用 音量データ抽出ツール (Auto-Max版)</h2>
     <p>パラメータを設定し、音楽ファイルを選択して「開始」を押してください。</p>
     
     <div class="setting-group">
@@ -29,8 +29,8 @@
             <input type="number" id="paramFrameTime" value="0.03" step="0.01" min="0.001">
         </div>
         <div class="setting-item">
-            <label>感度 (音のデカさ倍率):</label>
-            <input type="number" id="paramSensitivity" value="2.0" step="0.1" min="0.1">
+            <label>Scratchでの目標の最大高さ:</label>
+            <input type="number" id="paramTargetMax" value="100" step="1" min="1">
         </div>
         <div class="setting-item">
             <label>なめらかさ (0〜0.95):</label>
@@ -45,7 +45,7 @@
     <div id="status" style="color: #333;">ファイルを選択してボタンを押してください</div>
     
     <div class="info">
-        ★変更点：テキストエリアへの出力を廃止し、.txtファイルとして自動ダウンロードされるようになりました。ファイル名には曲名や設定した秒数・日付が自動で付きます。
+        ★新機能：「感度（倍率）」を廃止し、曲の最大音量を自動で探して「目標の最大高さ」にピッタリ合わせる全自動ノーマライズ機能を搭載しました！
     </div>
 </div>
 
@@ -56,7 +56,7 @@ window.onload = function() {
     const statusDiv = document.getElementById('status');
     
     const paramFrameTime = document.getElementById('paramFrameTime');
-    const paramSensitivity = document.getElementById('paramSensitivity');
+    const paramTargetMax = document.getElementById('paramTargetMax');
     const paramSmoothing = document.getElementById('paramSmoothing');
 
     startBtn.addEventListener('click', async function() {
@@ -70,21 +70,21 @@ window.onload = function() {
 
         startBtn.disabled = true;
         statusDiv.style.color = "#ff6600";
-        statusDiv.innerText = "⏳ 1/3: ファイルデータを読み込み中...";
+        statusDiv.innerText = "⏳ 1/4: ファイルデータを読み込み中...";
 
         try {
             const loadedArrayBuffer = await file.arrayBuffer();
             const baseFileName = file.name.includes('.') ? file.name.split('.').slice(0, -1).join('.') : file.name;
 
-            statusDiv.innerText = "🔍 2/3: 音声をデコード（解析）中...";
+            statusDiv.innerText = "🔍 2/4: 音声をデコード（解析）中...";
 
             const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const audioBuffer = await audioCtx.decodeAudioData(loadedArrayBuffer.slice(0)); 
             
-            statusDiv.innerText = "⏳ 3/3: 音量（RMS）データを計算中...";
+            statusDiv.innerText = "🔎 3/4: 曲全体の最大音量をスキャン中...";
 
             let stepSeconds = parseFloat(paramFrameTime.value) || 0.03;
-            let sensitivity = parseFloat(paramSensitivity.value) || 2.0;
+            let targetMax = parseInt(paramTargetMax.value) || 100;
             let smoothing = parseFloat(paramSmoothing.value) || 0.6;
             
             if (smoothing > 0.95) smoothing = 0.95;
@@ -94,9 +94,10 @@ window.onload = function() {
             const channelData = audioBuffer.getChannelData(0); 
             const interval = Math.floor(sampleRate * stepSeconds); 
             
-            let output = [];
-            let previousVolume = 0;
+            let rawRmsData = [];
+            let globalMaxRms = 0.0001; // ゼロ割りを防ぐための極小値
 
+            // 【パス1】曲全体をスキャンして波のエネルギー(RMS)を計算し、一番デカい音を探す
             for (let i = 0; i < channelData.length; i += interval) {
                 let sumSquares = 0;
                 let count = 0;
@@ -107,17 +108,35 @@ window.onload = function() {
                 }
                 
                 let rms = Math.sqrt(sumSquares / count);
-                let rawVolume = rms * 300 * sensitivity;
+                rawRmsData.push(rms);
+                
+                if (rms > globalMaxRms) {
+                    globalMaxRms = rms;
+                }
+            }
+
+            statusDiv.innerText = "⏳ 4/4: Scratch用のデータに自動調整（ノーマライズ）中...";
+
+            let output = [];
+            let previousVolume = 0;
+
+            // 【パス2】一番デカい音を基準に、すべての音量を「目標の最大高さ」に合わせて変換
+            for (let i = 0; i < rawRmsData.length; i++) {
+                // 0〜1の割合に直してから、目標の高さを掛ける
+                let normalized = rawRmsData[i] / globalMaxRms;
+                let rawVolume = normalized * targetMax;
+                
+                // なめらかさ（スムージング）の計算
                 let smoothedVolume = (rawVolume * (1 - smoothing)) + (previousVolume * smoothing);
                 previousVolume = smoothedVolume;
 
-                let finalVolume = Math.min(100, Math.round(smoothedVolume));
+                // 最終的な数値を四捨五入して出力（一応ターゲットを超えないように安全策）
+                let finalVolume = Math.min(targetMax, Math.round(smoothedVolume));
                 output.push(finalVolume);
             }
 
             const finalResultText = output.join('\n');
 
-            // ファイル名用の日付・時間を作成
             const now = new Date();
             const year = now.getFullYear();
             const month = (now.getMonth() + 1).toString().padStart(2, '0');
@@ -126,10 +145,9 @@ window.onload = function() {
                             now.getMinutes().toString().padStart(2, '0') + 
                             now.getSeconds().toString().padStart(2, '0');
             
-            // ファイル名の生成（元のファイル名_Volume_〇〇sec_日付_時間.txt）
-            const uniqueFileName = `${baseFileName}_Volume_${stepSeconds}sec_${year}${month}${date}_${timeStr}.txt`;
+            // ファイル名生成（AutoMaxに変更）
+            const uniqueFileName = `${baseFileName}_Volume_AutoMax${targetMax}_${stepSeconds}sec_${year}${month}${date}_${timeStr}.txt`;
 
-            // 自動ダウンロード処理
             const blob = new Blob([finalResultText], { type: 'text/plain' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
