@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>VolumeToScratch (Auto-Max版)</title>
+    <title>VolumeToScratch</title>
     <style>
         body { font-family: sans-serif; padding: 20px; background: #eef2f7; color: #333; }
         .box { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); max-width: 650px; margin: 0 auto; text-align: center; }
@@ -19,14 +19,14 @@
 <body>
 
 <div class="box">
-    <h2>🔊 Scratch用 音量データ抽出ツール (Auto-Max版)</h2>
+    <h2>🔊 Scratch用 音量データ抽出ツール (Auto-Max FPS同期版)</h2>
     <p>パラメータを設定し、音楽ファイルを選択して「開始」を押してください。</p>
     
     <div class="setting-group">
         <strong>⚙️ 解析パラメータ設定</strong>
         <div class="setting-item">
-            <label>一コマの秒数 (秒):</label>
-            <input type="number" id="paramFrameTime" value="0.03" step="0.01" min="0.001">
+            <label>出力フレームレート (FPS):</label>
+            <input type="number" id="paramFPS" value="30" step="1" min="1" max="250">
         </div>
         <div class="setting-item">
             <label>Scratchでの目標の最大高さ:</label>
@@ -45,7 +45,7 @@
     <div id="status" style="color: #333;">ファイルを選択してボタンを押してください</div>
     
     <div class="info">
-        ★新機能：「感度（倍率）」を廃止し、曲の最大音量を自動で探して「目標の最大高さ」にピッタリ合わせる全自動ノーマライズ機能を搭載しました！
+        ★FPS同期アップデート：秒数指定を排除し、Scratchのタイマーと100%連動するFPSベースに変更しました！曲全体の音量を完全同期で抽出します。
     </div>
 </div>
 
@@ -55,7 +55,7 @@ window.onload = function() {
     const startBtn = document.getElementById('startBtn');
     const statusDiv = document.getElementById('status');
     
-    const paramFrameTime = document.getElementById('paramFrameTime');
+    const paramFPS = document.getElementById('paramFPS');
     const paramTargetMax = document.getElementById('paramTargetMax');
     const paramSmoothing = document.getElementById('paramSmoothing');
 
@@ -83,7 +83,8 @@ window.onload = function() {
             
             statusDiv.innerText = "🔎 3/4: 曲全体の最大音量をスキャン中...";
 
-            let stepSeconds = parseFloat(paramFrameTime.value) || 0.03;
+            // FPSベースに値を修正
+            const targetFPS = parseInt(paramFPS.value) || 30;
             let targetMax = parseInt(paramTargetMax.value) || 100;
             let smoothing = parseFloat(paramSmoothing.value) || 0.6;
             
@@ -92,22 +93,28 @@ window.onload = function() {
 
             const sampleRate = audioBuffer.sampleRate;
             const channelData = audioBuffer.getChannelData(0); 
-            const interval = Math.floor(sampleRate * stepSeconds); 
+            
+            // FPS基準で1フレームあたりに進むサンプル数を正確に算出
+            const fpsSamples = sampleRate / targetFPS;
+            const totalFrames = Math.floor(audioBuffer.length / fpsSamples); 
             
             let rawRmsData = [];
-            let globalMaxRms = 0.0001; // ゼロ割りを防ぐための極小値
+            let globalMaxRms = 0.0001; 
 
-            // 【パス1】曲全体をスキャンして波のエネルギー(RMS)を計算し、一番デカい音を探す
-            for (let i = 0; i < channelData.length; i += interval) {
+            // 【パス1】丸め誤差を蓄積させないように、各フレーム位置のインデックスから直接サンプル範囲を決める
+            for (let f = 0; f < totalFrames; f++) {
+                const startSample = Math.floor(f * fpsSamples);
+                const endSample = Math.floor((f + 1) * fpsSamples);
+                
                 let sumSquares = 0;
                 let count = 0;
                 
-                for (let j = 0; j < interval && (i + j) < channelData.length; j++) {
-                    sumSquares += channelData[i + j] * channelData[i + j];
+                for (let i = startSample; i < endSample && i < channelData.length; i++) {
+                    sumSquares += channelData[i] * channelData[i];
                     count++;
                 }
                 
-                let rms = Math.sqrt(sumSquares / count);
+                let rms = count > 0 ? Math.sqrt(sumSquares / count) : 0;
                 rawRmsData.push(rms);
                 
                 if (rms > globalMaxRms) {
@@ -120,17 +127,14 @@ window.onload = function() {
             let output = [];
             let previousVolume = 0;
 
-            // 【パス2】一番デカい音を基準に、すべての音量を「目標の最大高さ」に合わせて変換
+            // 【パス2】ノーマライズ処理
             for (let i = 0; i < rawRmsData.length; i++) {
-                // 0〜1の割合に直してから、目標の高さを掛ける
                 let normalized = rawRmsData[i] / globalMaxRms;
                 let rawVolume = normalized * targetMax;
                 
-                // なめらかさ（スムージング）の計算
                 let smoothedVolume = (rawVolume * (1 - smoothing)) + (previousVolume * smoothing);
                 previousVolume = smoothedVolume;
 
-                // 最終的な数値を四捨五入して出力（一応ターゲットを超えないように安全策）
                 let finalVolume = Math.min(targetMax, Math.round(smoothedVolume));
                 output.push(finalVolume);
             }
@@ -145,8 +149,8 @@ window.onload = function() {
                             now.getMinutes().toString().padStart(2, '0') + 
                             now.getSeconds().toString().padStart(2, '0');
             
-            // ファイル名生成（AutoMaxに変更）
-            const uniqueFileName = `${baseFileName}_Volume_AutoMax${targetMax}_${stepSeconds}sec_${year}${month}${date}_${timeStr}.txt`;
+            // ファイル名にFPSを記載するように調整
+            const uniqueFileName = `${baseFileName}_Volume_AutoMax${targetMax}_${targetFPS}fps_${year}${month}${date}_${timeStr}.txt`;
 
             const blob = new Blob([finalResultText], { type: 'text/plain' });
             const link = document.createElement('a');
@@ -157,7 +161,7 @@ window.onload = function() {
             document.body.removeChild(link);
             
             statusDiv.style.color = "#27ae60";
-            statusDiv.innerText = `✅ 変換完了！[ 合計 ${output.length} コマ ] のデータを保存しました！`;
+            statusDiv.innerText = `✅ 変換完了！${targetFPS}FPS用に同期最適化し、[ 合計 ${output.length} コマ ] のデータを保存しました！`;
         } catch (err) {
             console.error(err);
             statusDiv.style.color = "#c0392b";
