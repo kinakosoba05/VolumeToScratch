@@ -2,109 +2,153 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>VolumeToScratch</title>
+    <title>VolumeToScratch (DL版)</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; background: #f0f4f8; color: #333; }
-        .box { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); max-width: 800px; margin: 0 auto; }
-        textarea { width: 100%; height: 300px; font-family: monospace; margin-top: 10px; box-sizing: border-box; padding: 10px; border: 1px solid #ccc; border-radius: 5px; }
-        button { padding: 10px 20px; background: #4c97ff; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin-right: 10px; }
-        button:hover { background: #337acc; }
-        #status { font-weight: bold; color: #ff6600; margin: 10px 0; }
-        .setting-item { margin: 15px 0; }
-        .setting-item label { font-weight: bold; margin-right: 10px; }
-        .setting-item input { padding: 5px; width: 80px; font-size: 16px; border: 1px solid #ccc; border-radius: 3px; }
+        body { font-family: sans-serif; padding: 20px; background: #eef2f7; color: #333; }
+        .box { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); max-width: 650px; margin: 0 auto; text-align: center; }
+        .setting-group { text-align: left; background: #f5f7fa; padding: 15px; border-radius: 8px; margin: 15px 0; border: 1px solid #ddd; }
+        .setting-item { margin: 10px 0; display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
+        .setting-item input { width: 100px; padding: 5px; border: 1px solid #ccc; border-radius: 4px; text-align: right; font-size: 16px; }
+        .btn-start { width: 100%; padding: 14px; background: #4c97ff; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; font-size: 16px; margin-top: 10px; }
+        .btn-start:hover { background: #337acc; }
+        .btn-start:disabled { background: #bdc3c7; cursor: not-allowed; }
+        #status { font-weight: bold; margin: 15px 0; }
+        .info { text-align: left; background: #e8f4f8; padding: 10px; border-radius: 5px; font-size: 13px; margin: 10px 0; border-left: 4px solid #4c97ff; }
     </style>
 </head>
 <body>
 
 <div class="box">
-    <h2>Scratchリスト用 音声データ抽出器</h2>
-    <p>音声ファイル（mp3やwavなど）を選択すると、音量を0〜100に変換してScratchのリスト形式で出力します。</p>
+    <h2>🔊 Scratch用 音量データ抽出ツール (DL版)</h2>
+    <p>パラメータを設定し、音楽ファイルを選択して「開始」を押してください。</p>
     
-    <div class="setting-item">
-        <label for="stepSeconds">一コマの秒数:</label>
-        <input type="number" id="stepSeconds" value="0.03" step="0.01" min="0.001"> 秒
+    <div class="setting-group">
+        <strong>⚙️ 解析パラメータ設定</strong>
+        <div class="setting-item">
+            <label>一コマの秒数 (秒):</label>
+            <input type="number" id="paramFrameTime" value="0.03" step="0.01" min="0.001">
+        </div>
+        <div class="setting-item">
+            <label>感度 (音のデカさ倍率):</label>
+            <input type="number" id="paramSensitivity" value="2.0" step="0.1" min="0.1">
+        </div>
+        <div class="setting-item">
+            <label>なめらかさ (0〜0.95):</label>
+            <input type="number" id="paramSmoothing" value="0.6" step="0.1" min="0" max="0.95">
+        </div>
     </div>
 
-    <input type="file" id="audioFile" accept="audio/*"><br><br>
+    <input type="file" id="audioFile" accept="audio/*"><br>
     
-    <div id="status">ファイルを選択してください</div>
+    <button id="startBtn" class="btn-start">音量データを変換してダウンロード</button>
     
-    <button id="copyBtn">結果をすべてコピー</button>
-    <textarea id="result" placeholder="ここにScratchのリストみたいな数字がずららららっと出ます" readonly></textarea>
+    <div id="status" style="color: #333;">ファイルを選択してボタンを押してください</div>
+    
+    <div class="info">
+        ★変更点：テキストエリアへの出力を廃止し、.txtファイルとして自動ダウンロードされるようになりました。ファイル名には曲名や設定した秒数・日付が自動で付きます。
+    </div>
 </div>
 
 <script>
-document.getElementById('audioFile').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
+window.onload = function() {
+    const audioFileInput = document.getElementById('audioFile');
+    const startBtn = document.getElementById('startBtn');
     const statusDiv = document.getElementById('status');
-    const resultTextarea = document.getElementById('result');
-    const stepSecondsInput = document.getElementById('stepSeconds');
     
-    statusDiv.innerText = "⏳ 音声ファイルを読み込み中...（長い曲は少し時間がかかります）";
-    resultTextarea.value = "";
+    const paramFrameTime = document.getElementById('paramFrameTime');
+    const paramSensitivity = document.getElementById('paramSensitivity');
+    const paramSmoothing = document.getElementById('paramSmoothing');
 
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    const audioCtx = new AudioContext();
-    
-    try {
-        const arrayBuffer = await file.arrayBuffer();
-        statusDiv.innerText = "⏳ 音声をデコード（解析）中...";
+    startBtn.addEventListener('click', async function() {
+        const file = audioFileInput.files[0];
         
-        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-        const channelData = audioBuffer.getChannelData(0); 
-        
-        statusDiv.innerText = "⏳ Scratch用のデータに変換中...";
-        
-        const sampleRate = audioBuffer.sampleRate;
-        // 入力された秒数を取得（不正な値の場合はデフォルトの0.03秒にする）
-        let stepSeconds = parseFloat(stepSecondsInput.value);
-        if (isNaN(stepSeconds) || stepSeconds <= 0) {
-            stepSeconds = 0.03;
+        if (!file) {
+            statusDiv.style.color = "#c0392b";
+            statusDiv.innerText = "⚠️ エラー：先に音楽ファイルを選んでください！";
+            return;
         }
-        
-        const interval = Math.floor(sampleRate * stepSeconds); 
-        
-        // ★ここから下の音量抽出ロジックのみを修正しました
-        let output = [];
-        for (let i = 0; i < channelData.length; i += interval) {
-            let maxInFrame = 0;
+
+        startBtn.disabled = true;
+        statusDiv.style.color = "#ff6600";
+        statusDiv.innerText = "⏳ 1/3: ファイルデータを読み込み中...";
+
+        try {
+            const loadedArrayBuffer = await file.arrayBuffer();
+            const baseFileName = file.name.includes('.') ? file.name.split('.').slice(0, -1).join('.') : file.name;
+
+            statusDiv.innerText = "🔍 2/3: 音声をデコード（解析）中...";
+
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const audioBuffer = await audioCtx.decodeAudioData(loadedArrayBuffer.slice(0)); 
             
-            // 指定された時間（0.03秒など）の区間内をすべてスキャンし、最大の波の高さ（ピーク）を探す
-            for (let j = 0; j < interval && (i + j) < channelData.length; j++) {
-                let currentVal = Math.abs(channelData[i + j]);
-                if (currentVal > maxInFrame) {
-                    maxInFrame = currentVal;
+            statusDiv.innerText = "⏳ 3/3: 音量（RMS）データを計算中...";
+
+            let stepSeconds = parseFloat(paramFrameTime.value) || 0.03;
+            let sensitivity = parseFloat(paramSensitivity.value) || 2.0;
+            let smoothing = parseFloat(paramSmoothing.value) || 0.6;
+            
+            if (smoothing > 0.95) smoothing = 0.95;
+            if (smoothing < 0) smoothing = 0;
+
+            const sampleRate = audioBuffer.sampleRate;
+            const channelData = audioBuffer.getChannelData(0); 
+            const interval = Math.floor(sampleRate * stepSeconds); 
+            
+            let output = [];
+            let previousVolume = 0;
+
+            for (let i = 0; i < channelData.length; i += interval) {
+                let sumSquares = 0;
+                let count = 0;
+                
+                for (let j = 0; j < interval && (i + j) < channelData.length; j++) {
+                    sumSquares += channelData[i + j] * channelData[i + j];
+                    count++;
                 }
-            }
-            
-            // 区間内の最大音量を0〜100に変換
-            let volume = Math.round(maxInFrame * 100);
-            output.push(volume);
-        }
-        // ★修正ここまで
-        
-        resultTextarea.value = output.join('\n');
-        statusDiv.innerText = `✅ 完了しました！ （合計 ${output.length} コマのデータ / 一コマ ${stepSeconds} 秒）`;
-        
-    } catch (err) {
-        console.error(err);
-        statusDiv.innerText = "❌ エラー：音声ファイルの解析に失敗しました。別のmp3やwavファイルで試してみてください。";
-    }
-});
+                
+                let rms = Math.sqrt(sumSquares / count);
+                let rawVolume = rms * 300 * sensitivity;
+                let smoothedVolume = (rawVolume * (1 - smoothing)) + (previousVolume * smoothing);
+                previousVolume = smoothedVolume;
 
-document.getElementById('copyBtn').addEventListener('click', () => {
-    const textarea = document.getElementById('result');
-    if(!textarea.value) {
-        alert('まだデータがありません！音声ファイルを選んでね。');
-        return;
-    }
-    textarea.select();
-    navigator.clipboard.writeText(textarea.value);
-    alert('コピーしました！Scratchのリストの「読み込み」から使ってね！');
-});
+                let finalVolume = Math.min(100, Math.round(smoothedVolume));
+                output.push(finalVolume);
+            }
+
+            const finalResultText = output.join('\n');
+
+            // ファイル名用の日付・時間を作成
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = (now.getMonth() + 1).toString().padStart(2, '0');
+            const date = now.getDate().toString().padStart(2, '0');
+            const timeStr = now.getHours().toString().padStart(2, '0') + 
+                            now.getMinutes().toString().padStart(2, '0') + 
+                            now.getSeconds().toString().padStart(2, '0');
+            
+            // ファイル名の生成（元のファイル名_Volume_〇〇sec_日付_時間.txt）
+            const uniqueFileName = `${baseFileName}_Volume_${stepSeconds}sec_${year}${month}${date}_${timeStr}.txt`;
+
+            // 自動ダウンロード処理
+            const blob = new Blob([finalResultText], { type: 'text/plain' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = uniqueFileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            statusDiv.style.color = "#27ae60";
+            statusDiv.innerText = `✅ 変換完了！[ 合計 ${output.length} コマ ] のデータを保存しました！`;
+        } catch (err) {
+            console.error(err);
+            statusDiv.style.color = "#c0392b";
+            statusDiv.innerText = "❌ エラー：音声データの解析に失敗しました。";
+        } finally {
+            startBtn.disabled = false;
+        }
+    });
+};
 </script>
 
 </body>
