@@ -19,7 +19,7 @@
 <body>
 
 <div class="box">
-    <h2>🔊 Scratch用 音量データ抽出ツール (Auto-Max FPS同期版)</h2>
+    <h2>🔊 Scratch用 音量データ抽出ツール (Auto-Max 行数統一版)</h2>
     <p>パラメータを設定し、音楽ファイルを選択して「開始」を押してください。</p>
     
     <div class="setting-group">
@@ -45,7 +45,7 @@
     <div id="status" style="color: #333;">ファイルを選択してボタンを押してください</div>
     
     <div class="info">
-        ★FPS同期アップデート：秒数指定を排除し、Scratchのタイマーと100%連動するFPSベースに変更しました！曲全体の音量を完全同期で抽出します。
+        ★行数統一アップデート：Visualizerツールと最後のコマの判定基準を完全に統一し、出力ファイルのデータ数が完全に一致するように修正しました。
     </div>
 </div>
 
@@ -83,7 +83,6 @@ window.onload = function() {
             
             statusDiv.innerText = "🔎 3/4: 曲全体の最大音量をスキャン中...";
 
-            // FPSベースに値を修正
             const targetFPS = parseInt(paramFPS.value) || 30;
             let targetMax = parseInt(paramTargetMax.value) || 100;
             let smoothing = parseFloat(paramSmoothing.value) || 0.6;
@@ -94,17 +93,19 @@ window.onload = function() {
             const sampleRate = audioBuffer.sampleRate;
             const channelData = audioBuffer.getChannelData(0); 
             
-            // FPS基準で1フレームあたりに進むサンプル数を正確に算出
             const fpsSamples = sampleRate / targetFPS;
+            
+            // 【終端処理統一】Visualizer側と完全に一致させる
             const totalFrames = Math.floor(audioBuffer.length / fpsSamples); 
             
             let rawRmsData = [];
             let globalMaxRms = 0.0001; 
 
-            // 【パス1】丸め誤差を蓄積させないように、各フレーム位置のインデックスから直接サンプル範囲を決める
             for (let f = 0; f < totalFrames; f++) {
                 const startSample = Math.floor(f * fpsSamples);
                 const endSample = Math.floor((f + 1) * fpsSamples);
+                
+                if (startSample >= channelData.length) break;
                 
                 let sumSquares = 0;
                 let count = 0;
@@ -127,7 +128,6 @@ window.onload = function() {
             let output = [];
             let previousVolume = 0;
 
-            // 【パス2】ノーマライズ処理
             for (let i = 0; i < rawRmsData.length; i++) {
                 let normalized = rawRmsData[i] / globalMaxRms;
                 let rawVolume = normalized * targetMax;
@@ -149,7 +149,6 @@ window.onload = function() {
                             now.getMinutes().toString().padStart(2, '0') + 
                             now.getSeconds().toString().padStart(2, '0');
             
-            // ファイル名にFPSを記載するように調整
             const uniqueFileName = `${baseFileName}_Volume_AutoMax${targetMax}_${targetFPS}fps_${year}${month}${date}_${timeStr}.txt`;
 
             const blob = new Blob([finalResultText], { type: 'text/plain' });
@@ -161,7 +160,7 @@ window.onload = function() {
             document.body.removeChild(link);
             
             statusDiv.style.color = "#27ae60";
-            statusDiv.innerText = `✅ 変換完了！${targetFPS}FPS用に同期最適化し、[ 合計 ${output.length} コマ ] のデータを保存しました！`;
+            statusDiv.innerText = `✅ 変換完了！[ 合計 ${output.length} 行 ] で保存しました！`;
         } catch (err) {
             console.error(err);
             statusDiv.style.color = "#c0392b";
